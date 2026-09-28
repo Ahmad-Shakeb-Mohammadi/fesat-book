@@ -47,6 +47,9 @@ import { openSearchPeopleModal, closeSearchPeopleModal, handleSearchPeopleInput,
 import { navigateToConversation } from "./chat/chatNavigator.js";
 import { invalidateRoute, invalidateAll } from "./utils/routeCache.js";
 
+// Rapid-click guard state for like buttons
+const likeClickTimes = new Map();
+
 // Simple function to find and update all instances of a post
 function updateAllPostInstances(postId, updates) {
     // Find all cards that contain this post ID
@@ -147,16 +150,24 @@ export function FeedDelegation() {
 
         if (likeBtn) {
             e.preventDefault();
-            if (likeBtn.disabled) return;
-            likeBtn.disabled = true;
+
+            // Rapid-click guard (prevents racing toggle requests - no visible disable)
+            const lastClick = likeClickTimes.get(likeBtn.dataset.postId) || 0;
+            if (Date.now() - lastClick < 400) return;
+            likeClickTimes.set(likeBtn.dataset.postId, Date.now());
 
             const postId = likeBtn.dataset.postId;
             const icon = likeBtn.querySelector('.like-icon');
             const wasLiked = likeBtn.classList.contains('liked');
 
+            // Read current state BEFORE flipping
             const currentCard = likeBtn.closest('.card');
-            const parentBody = likeBtn.closest(".card-body") || currentCard;
+            const likeCountSpan = currentCard?.querySelector('.like-count');
+            const currentLikes = parseInt(likeCountSpan?.textContent) || 0;
+            const newLikes = wasLiked ? currentLikes - 1 : currentLikes + 1;
 
+            // Collapse open likes-view panel (existing behaviour - keep)
+            const parentBody = likeBtn.closest(".card-body") || currentCard;
             if (parentBody) {
                 const likeDiv = parentBody.querySelector(`.likes-view-${postId}`);
                 if (likeDiv && !likeDiv.classList.contains("d-none")) {
@@ -168,41 +179,26 @@ export function FeedDelegation() {
                 }
             }
 
-            icon.style.transform = 'scale(1.2)';
-            let initialAnimationTimeout = setTimeout(() => {
-                icon.style.transform = 'scale(1)';
-            }, 150);
+            // 1. INSTANT optimistic flip - no disable, no gray, no waiting (Facebook style)
+            updateAllPostInstances(postId, {
+                likes: newLikes,
+                userLiked: !wasLiked
+            });
 
-            try {
-                const data = await postLike(postId);
-                const likeCountSpan = currentCard.querySelector('.like-count');
-                const currentLikes = parseInt(likeCountSpan.textContent) || 0;
-                const newLikes = wasLiked ? currentLikes - 1 : currentLikes + 1;
-
-                // Synchronize ALL duplicate elements matching this post across the DOM
-                updateAllPostInstances(postId, {
-                    likes: newLikes,
-                    userLiked: !wasLiked
-                });
-
-                if (!wasLiked) {
-                    clearTimeout(initialAnimationTimeout);
-                    setTimeout(() => {
-                        icon.style.transform = 'scale(1.1)';
-                        setTimeout(() => {
-                            icon.style.transform = 'scale(1)';
-                        }, 100);
-                    }, 50);
-                }
-            } catch (error) {
-                toast.error("Failed to like!")
-                icon.style.transform = 'scale(1)';
-            } finally {
-                // Safely re-enable ALL matching action buttons across the entire layout
-                document.querySelectorAll(`.like-btn[data-post-id="${postId}"]`).forEach(btn => {
-                    btn.disabled = false;
-                });
+            // 2. Pop animation
+            if (icon) {
+                icon.style.transform = 'scale(1.25)';
+                setTimeout(() => { icon.style.transform = 'scale(1)'; }, 150);
             }
+
+            // 3. Fire in background - roll back ONLY if the server rejects
+            postLike(postId).catch(() => {
+                updateAllPostInstances(postId, {
+                    likes: currentLikes,
+                    userLiked: wasLiked
+                });
+                toast.error("Failed to like!");
+            });
 
         } else if (commentToggles) {
             let parent = e.target.closest('.card-body')

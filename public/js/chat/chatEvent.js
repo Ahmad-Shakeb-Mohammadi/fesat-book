@@ -1781,16 +1781,41 @@ function handleTouchMove(e) {
     }
 }
 
-function buildMessageActionButtons(isOwn, hasAttachments, btnClass) {
+// Shared: copy message text to clipboard (used by dropdown + action sheet)
+async function handleCopyMessage(messageId) {
+    const cached = chatState.messagesCache[chatState.activeConversationId];
+    const message = cached?.messages.find(m => m._id === messageId);
+    if (!message?.text || !message.text.trim()) {
+        toast.error('Nothing to copy');
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(message.text);
+        toast.success('Copied', 1200);
+    } catch {
+        toast.error('Copy failed');
+    }
+}
+
+// SINGLE source of truth for message actions (desktop dropdown + mobile sheet)
+function buildMessageActionButtons(isOwn, hasAttachments, hasText, btnClass) {
+    const copyBtn = hasText ? `<button class="${btnClass}" data-action="copy">
+        <svg viewBox="0 0 16 16"><path d="M4 1.5A1.5 1.5 0 0 1 5.5 0h8A1.5 1.5 0 0 1 15 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 4 10.5v-9zm1.5-.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-8z"/><path d="M2 3.5A1.5 1.5 0 0 0 .5 5v8A1.5 1.5 0 0 0 2 14.5h8a1.5 1.5 0 0 0 1.5-1.5V12h-1v1a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h1v-1H2z"/></svg>
+        <span>Copy</span>
+    </button>` : '';
+
     const editBtn = isOwn && !hasAttachments ? `<button class="${btnClass}" data-action="edit">
         <svg viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
         <span>Edit</span>
     </button>` : '';
+
     const deleteEveryoneBtn = isOwn ? `<button class="${btnClass} danger" data-action="delete-everyone">
         <svg viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1h2.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
         <span>Delete for everyone</span>
     </button>` : '';
+
     return `
+        ${copyBtn}
         <button class="${btnClass}" data-action="reply">
             <svg viewBox="0 0 16 16"><path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.65a.5.5 0 0 0 .5.5H14a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h6.5v-.517a.144.144 0 0 1 .098-.134z"/></svg>
             <span>Reply</span>
@@ -1804,8 +1829,22 @@ function buildMessageActionButtons(isOwn, hasAttachments, btnClass) {
     `;
 }
 
+// Shared action dispatch (used by dropdown + sheet - one place, never drifts)
+async function dispatchMessageAction(action, messageId) {
+    if (action === 'copy') {
+        await handleCopyMessage(messageId);
+    } else if (action === 'reply') {
+        showReplyPreview(messageId);
+    } else if (action === 'edit') {
+        showEditMessage(messageId);
+    } else if (action === 'delete-me') {
+        await handleDeleteForMe(messageId);
+    } else if (action === 'delete-everyone') {
+        await handleDeleteForEveryone(messageId);
+    }
+}
+
 function showMobileActionSheet(messageId) {
-    // Remove any existing sheets first
     closeMobileActionSheet(true);
 
     const cached = chatState.messagesCache[chatState.activeConversationId];
@@ -1816,41 +1855,29 @@ function showMobileActionSheet(messageId) {
 
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
+    const hasText = !!(message.text && message.text.trim());
 
-    // Create overlay
     const overlay = document.createElement('div');
     overlay.className = 'mobile-action-sheet-overlay';
     overlay.onclick = closeMobileActionSheet;
 
-    // Create sheet
     const sheet = document.createElement('div');
     sheet.className = 'mobile-action-sheet';
-    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, "mobile-action-item") + `</div>`;
+    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, hasText, "mobile-action-item") + `</div>`;
 
     document.body.appendChild(overlay);
     document.body.appendChild(sheet);
 
-    // Animate in
     requestAnimationFrame(() => {
         overlay.classList.add('active');
         sheet.classList.add('active');
     });
 
-    // Add click handlers
     sheet.querySelectorAll('.mobile-action-item').forEach(btn => {
         btn.onclick = async (e) => {
             const action = btn.dataset.action;
             closeMobileActionSheet();
-
-            if (action === 'reply') {
-                showReplyPreview(messageId);
-            } else if (action === 'edit') {
-                showEditMessage(messageId);
-            } else if (action === 'delete-me') {
-                await handleDeleteForMe(messageId);
-            } else if (action === 'delete-everyone') {
-                await handleDeleteForEveryone(messageId);
-            }
+            await dispatchMessageAction(action, messageId);
         };
     });
 }
@@ -1860,11 +1887,9 @@ function closeMobileActionSheet(immediate = false) {
     const sheets = document.querySelectorAll('.mobile-action-sheet');
 
     if (immediate === true) {
-        // Remove immediately without animation
         overlays.forEach(el => el.remove());
         sheets.forEach(el => el.remove());
     } else {
-        // Animate out then remove
         overlays.forEach(overlay => overlay.classList.remove('active'));
         sheets.forEach(sheet => sheet.classList.remove('active'));
 
@@ -1890,55 +1915,21 @@ function showActionDropdown(button, messageId) {
 
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
+    const hasText = !!(message.text && message.text.trim());
 
+    // Same shared builder as the mobile sheet - no duplicated markup
     const dropdown = document.createElement('div');
     dropdown.className = 'action-dropdown';
-    dropdown.innerHTML = `
-        <button class="action-dropdown-item" data-action="reply">
-            <svg viewBox="0 0 16 16">
-                <path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.65a.5.5 0 0 0 .5.5H14a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h6.5v-.517a.144.144 0 0 1 .098-.134z"/>
-            </svg>
-            <span>Reply</span>
-        </button>
-
-        ${isOwn && !hasAttachments ? `
-            <button class="action-dropdown-item" data-action="edit">
-                <svg viewBox="0 0 16 16">
-                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
-                </svg>
-                <span>Edit</span>
-            </button>
-        ` : ''}
-
-        <button class="action-dropdown-item" data-action="delete-me">
-            <svg viewBox="0 0 16 16">
-                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1h2.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-            </svg>
-            <span>Delete for me</span>
-        </button>
-
-        ${isOwn ? `
-            <button class="action-dropdown-item danger" data-action="delete-everyone">
-                <svg viewBox="0 0 16 16">
-                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                    <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1h2.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-                </svg>
-                <span>Delete for everyone</span>
-            </button>
-        ` : ''}
-    `;
+    dropdown.innerHTML = buildMessageActionButtons(isOwn, hasAttachments, hasText, "action-dropdown-item");
 
     document.body.appendChild(dropdown);
 
-    // Position dropdown near button
     const buttonRect = button.getBoundingClientRect();
     const dropdownRect = dropdown.getBoundingClientRect();
 
     let top = buttonRect.top;
     let left = buttonRect.right + 8;
 
-    // Adjust if dropdown goes off-screen
     if (left + dropdownRect.width > window.innerWidth) {
         left = buttonRect.left - dropdownRect.width - 8;
     }
@@ -1949,28 +1940,17 @@ function showActionDropdown(button, messageId) {
     dropdown.style.top = `${top}px`;
     dropdown.style.left = `${left}px`;
 
-    // Animate in
     requestAnimationFrame(() => {
         dropdown.classList.add('active');
     });
 
     activeDropdown = dropdown;
 
-    // Add click handlers
     dropdown.querySelectorAll('.action-dropdown-item').forEach(btn => {
         btn.onclick = async (e) => {
             const action = btn.dataset.action;
             closeActionDropdown();
-
-            if (action === 'reply') {
-                showReplyPreview(messageId);
-            } else if (action === 'edit') {
-                showEditMessage(messageId);
-            } else if (action === 'delete-me') {
-                await handleDeleteForMe(messageId);
-            } else if (action === 'delete-everyone') {
-                await handleDeleteForEveryone(messageId);
-            }
+            await dispatchMessageAction(action, messageId);
         };
     });
 }

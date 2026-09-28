@@ -2623,3 +2623,43 @@ body {
 .sidebar-left .sidebar-scroll::-webkit-scrollbar-thumb:hover {
     background-color: #9ca3af;
 }
+
+
+/* ============================================================
+   iOS (iPhone Chrome/Safari) KEYBOARD + ZOOM FIXES
+
+   1) iOS auto-zooms into any input with font-size < 16px.
+      Force 16px on phones ONLY (desktop design untouched).
+   2) 100vh ignores the iOS keyboard; 100dvh shrinks with it.
+   ============================================================ */
+@media (max-width: 767.98px) {
+
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="search"],
+    input[type="tel"],
+    input[type="url"],
+    input[type="number"],
+    select,
+    textarea {
+        font-size: 16px !important;
+    }
+}
+
+/* Body must use dynamic viewport in messenger mode,
+   otherwise the input sits behind the open keyboard */
+body.messenger-active {
+    height: 100vh;
+    /* fallback - old browsers */
+    height: 100dvh;
+    /* the fix - shrinks when keyboard opens */
+}
+
+/* Touch devices: no hover exists -> hide the 3-dot button.
+   Long-press on the bubble opens the action sheet (WhatsApp style). */
+@media (hover: none) and (pointer: coarse) {
+    .message-actions {
+        display: none !important;
+    }
+}

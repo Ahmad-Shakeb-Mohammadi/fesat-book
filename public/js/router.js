@@ -73,10 +73,17 @@ function getMiddleBar() {
 }
 
 function closeOpenModals() {
+    // Bootstrap modals
     const openModal = document.querySelector(".modal.show");
     if (openModal) {
         bootstrap.Modal.getInstance(openModal)?.hide();
     }
+
+    // Left/right hamburger panels (Bootstrap Offcanvas) -
+    // they live in the shell, survive routing, and trap mobile until closed manually
+    document.querySelectorAll(".offcanvas.show").forEach(el => {
+        bootstrap.Offcanvas.getOrCreateInstance(el).hide();
+    });
 }
 
 function abortCurrentRequest() {
