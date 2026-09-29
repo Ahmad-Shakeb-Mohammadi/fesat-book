@@ -30,7 +30,7 @@ export function clearActiveConversation() {
 }
 
 export function cacheMessages(conversationId, messages, hasMore, nextCursor, recipientLastReadAt = null, isComplete = true) {
-  chatState.messagesCache[conversationId] = { messages, hasMore, nextCursor, recipientLastReadAt, isComplete };
+  chatState.messagesCache[conversationId] = { messages, hasMore, nextCursor, recipientLastReadAt, isComplete, cachedAt: Date.now() };
 }
 
 export function getCachedMessages(conversationId) {

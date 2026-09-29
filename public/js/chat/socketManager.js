@@ -22,7 +22,7 @@ export function initSocket() {
     autoConnect: true,
     reconnection: true,
     reconnectionDelay: 1000,
-    reconnectionAttempts: 5
+    reconnectionAttempts: Infinity
   });
 
   // Handle connection errors

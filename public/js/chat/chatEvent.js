@@ -920,9 +920,13 @@ async function handleChatKeydown(e) {
         return;
     }
 
-    // 4. Message Input: Enter to Send
+    // 4. Message Input: Enter to Send (desktop only - mobile Enter = newline, like WhatsApp)
     const messageInput = e.target.closest("#messageInput");
     if (messageInput && e.key === "Enter" && !e.shiftKey) {
+        // Touch devices: let Enter insert a newline naturally - send via button only
+        if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {
+            return;
+        }
         e.preventDefault();
         const sendBtn = document.getElementById("sendBtn");
         if (sendBtn && !sendBtn.disabled) {
@@ -954,10 +958,12 @@ export async function openConversation(conversationId) {
     joinConversation(conversationId);
     updateMobileView("chat");
 
-    const cached = chatState.messagesCache[conversationId];
-
     // Smart loading: Fetch API only when no cache OR incomplete cache
-    if (!cached || !cached.isComplete) {
+    const cached = chatState.messagesCache[conversationId];
+    const isStale = cached?.cachedAt && (Date.now() - cached.cachedAt > 90 * 1000);
+
+    // Smart loading: fetch when no cache, incomplete cache, OR cache older than 90s
+    if (!cached || !cached.isComplete || isStale) {
         await loadAndMergeMessages(conversationId, cached);
     }
 
@@ -1797,11 +1803,59 @@ async function handleCopyMessage(messageId) {
     }
 }
 
+// Save message media (images/videos) to device - programmatic download
+async function handleSaveMessageMedia(messageId) {
+    const cached = chatState.messagesCache[chatState.activeConversationId];
+    const message = cached?.messages.find(m => m._id === messageId);
+    const mediaAtts = (message?.attachments || []).filter(a => a.type === 'image' || a.type === 'video');
+
+    if (mediaAtts.length === 0) {
+        toast.error('Nothing to save');
+        return;
+    }
+
+    toast.info('Saving...', 1000);
+    let saved = 0;
+
+    for (const att of mediaAtts) {
+        try {
+            const data = await getChatMediaUrl(att.public_id, att.resource_type, chatState.activeConversationId);
+            if (!data?.mediaUrl) throw new Error('No media URL');
+
+            const res = await fetch(data.mediaUrl);
+            if (!res.ok) throw new Error('Download failed');
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = att.originalName?.trim() || `${att.public_id.split('/').pop()}.${att.format || 'jpg'}`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            // Revoke late so iOS has time to open the preview
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+            saved++;
+        } catch (err) {
+            console.error('Save failed:', att.public_id, err);
+        }
+    }
+
+    if (saved > 0) toast.success(saved === 1 ? 'Saved' : `Saved ${saved} files`, 1500);
+    else toast.error('Failed to save');
+}
+
 // SINGLE source of truth for message actions (desktop dropdown + mobile sheet)
-function buildMessageActionButtons(isOwn, hasAttachments, hasText, btnClass) {
+function buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, btnClass) {
     const copyBtn = hasText ? `<button class="${btnClass}" data-action="copy">
         <svg viewBox="0 0 16 16"><path d="M4 1.5A1.5 1.5 0 0 1 5.5 0h8A1.5 1.5 0 0 1 15 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 4 10.5v-9zm1.5-.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-8z"/><path d="M2 3.5A1.5 1.5 0 0 0 .5 5v8A1.5 1.5 0 0 0 2 14.5h8a1.5 1.5 0 0 0 1.5-1.5V12h-1v1a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h1v-1H2z"/></svg>
         <span>Copy</span>
+    </button>` : '';
+
+    const saveBtn = hasMedia ? `<button class="${btnClass}" data-action="save">
+        <svg viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+        <span>Save</span>
     </button>` : '';
 
     const editBtn = isOwn && !hasAttachments ? `<button class="${btnClass}" data-action="edit">
@@ -1816,6 +1870,7 @@ function buildMessageActionButtons(isOwn, hasAttachments, hasText, btnClass) {
 
     return `
         ${copyBtn}
+        ${saveBtn}
         <button class="${btnClass}" data-action="reply">
             <svg viewBox="0 0 16 16"><path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.65a.5.5 0 0 0 .5.5H14a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1h6.5v-.517a.144.144 0 0 1 .098-.134z"/></svg>
             <span>Reply</span>
@@ -1833,6 +1888,8 @@ function buildMessageActionButtons(isOwn, hasAttachments, hasText, btnClass) {
 async function dispatchMessageAction(action, messageId) {
     if (action === 'copy') {
         await handleCopyMessage(messageId);
+    } else if (action === 'save') {
+        await handleSaveMessageMedia(messageId);
     } else if (action === 'reply') {
         showReplyPreview(messageId);
     } else if (action === 'edit') {
@@ -1856,6 +1913,7 @@ function showMobileActionSheet(messageId) {
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
     const hasText = !!(message.text && message.text.trim());
+    const hasMedia = (message.attachments || []).some(a => a.type === 'image' || a.type === 'video');
 
     const overlay = document.createElement('div');
     overlay.className = 'mobile-action-sheet-overlay';
@@ -1863,7 +1921,7 @@ function showMobileActionSheet(messageId) {
 
     const sheet = document.createElement('div');
     sheet.className = 'mobile-action-sheet';
-    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, hasText, "mobile-action-item") + `</div>`;
+    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, "mobile-action-item") + `</div>`;
 
     document.body.appendChild(overlay);
     document.body.appendChild(sheet);
@@ -1916,12 +1974,12 @@ function showActionDropdown(button, messageId) {
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
     const hasText = !!(message.text && message.text.trim());
+    const hasMedia = (message.attachments || []).some(a => a.type === 'image' || a.type === 'video');
 
     // Same shared builder as the mobile sheet - no duplicated markup
     const dropdown = document.createElement('div');
     dropdown.className = 'action-dropdown';
-    dropdown.innerHTML = buildMessageActionButtons(isOwn, hasAttachments, hasText, "action-dropdown-item");
-
+    dropdown.innerHTML = buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, "action-dropdown-item");
     document.body.appendChild(dropdown);
 
     const buttonRect = button.getBoundingClientRect();

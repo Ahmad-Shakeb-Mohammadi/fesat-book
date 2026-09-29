@@ -1573,7 +1573,7 @@ body.messenger-active {
 
   .message-search-bar input {
     height: 30px !important;
-    font-size: 13px !important;
+    font-size: 16px !important;
   }
 
   .search-navigation button {
@@ -1879,5 +1879,27 @@ body.messenger-active {
   30% {
     transform: translateY(-3px);
     opacity: 1;
+  }
+}
+
+
+/* Group info panel: constrain the flex scroll area + clip at panel bounds */
+.group-info-panel {
+  overflow: hidden;
+  /* nothing renders outside the panel */
+}
+
+.group-info-panel .overflow-auto {
+  min-height: 0;
+  /* THE fix - lets the flex child shrink and scroll instead of overflowing past the header */
+}
+
+/* iOS: long-press opens OUR action sheet - kill the native blue
+   text-selection + iOS callout menu (passive listeners can't preventDefault) */
+@media (hover: none) and (pointer: coarse) {
+  .message-bubble-wrapper {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
 }
