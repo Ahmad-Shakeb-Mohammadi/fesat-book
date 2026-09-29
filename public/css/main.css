@@ -2292,8 +2292,7 @@ body {
 }
 
 
-/*  just for the images on chat and feed */
-/* Persistent Preview Overlay styling */
+/* ===== Persistent Preview Overlay (chat + feed images) ===== */
 .native-preview-overlay {
     display: flex;
     position: fixed;
@@ -2331,6 +2330,16 @@ body {
 
 .native-preview-overlay.active img {
     transform: scale(1);
+}
+
+/* Touch devices: re-enable native long-press (Save to Photos / Share) on the preview image.
+   The user-select:none above (needed for desktop) kills the iOS callout. */
+@media (hover: none) and (pointer: coarse) {
+    .native-preview-overlay img {
+        -webkit-user-select: auto;
+        user-select: auto;
+        -webkit-touch-callout: default;
+    }
 }
 
 

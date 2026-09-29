@@ -1803,60 +1803,61 @@ async function handleCopyMessage(messageId) {
     }
 }
 
-// Save message media (images/videos) to device - programmatic download
-async function handleSaveMessageMedia(messageId) {
+// Save ONE message media attachment (index from the action button)
+async function handleSaveMessageMedia(messageId, attIndex = 0) {
     const cached = chatState.messagesCache[chatState.activeConversationId];
     const message = cached?.messages.find(m => m._id === messageId);
     const mediaAtts = (message?.attachments || []).filter(a => a.type === 'image' || a.type === 'video');
 
-    if (mediaAtts.length === 0) {
+    const att = mediaAtts[parseInt(attIndex, 10)];
+    if (!att) {
         toast.error('Nothing to save');
         return;
     }
 
     toast.info('Saving...', 1000);
-    let saved = 0;
+    try {
+        const data = await getChatMediaUrl(att.public_id, att.resource_type, chatState.activeConversationId);
+        if (!data?.mediaUrl) throw new Error('No media URL');
 
-    for (const att of mediaAtts) {
-        try {
-            const data = await getChatMediaUrl(att.public_id, att.resource_type, chatState.activeConversationId);
-            if (!data?.mediaUrl) throw new Error('No media URL');
+        const res = await fetch(data.mediaUrl);
+        if (!res.ok) throw new Error('Download failed');
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
 
-            const res = await fetch(data.mediaUrl);
-            if (!res.ok) throw new Error('Download failed');
-            const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = att.originalName?.trim() || `${att.public_id.split('/').pop()}.${att.format || 'jpg'}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = att.originalName?.trim() || `${att.public_id.split('/').pop()}.${att.format || 'jpg'}`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            // Revoke late so iOS has time to open the preview
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-            saved++;
-        } catch (err) {
-            console.error('Save failed:', att.public_id, err);
-        }
+        toast.success('Saved', 1500);
+    } catch (err) {
+        console.error('Save failed:', att.public_id, err);
+        toast.error('Failed to save');
     }
-
-    if (saved > 0) toast.success(saved === 1 ? 'Saved' : `Saved ${saved} files`, 1500);
-    else toast.error('Failed to save');
 }
 
 // SINGLE source of truth for message actions (desktop dropdown + mobile sheet)
-function buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, btnClass) {
+function buildMessageActionButtons(isOwn, hasAttachments, hasText, mediaAtts, btnClass) {
     const copyBtn = hasText ? `<button class="${btnClass}" data-action="copy">
         <svg viewBox="0 0 16 16"><path d="M4 1.5A1.5 1.5 0 0 1 5.5 0h8A1.5 1.5 0 0 1 15 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 4 10.5v-9zm1.5-.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-8z"/><path d="M2 3.5A1.5 1.5 0 0 0 .5 5v8A1.5 1.5 0 0 0 2 14.5h8a1.5 1.5 0 0 0 1.5-1.5V12h-1v1a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h1v-1H2z"/></svg>
         <span>Copy</span>
     </button>` : '';
 
-    const saveBtn = hasMedia ? `<button class="${btnClass}" data-action="save">
-        <svg viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
-        <span>Save</span>
-    </button>` : '';
+    // One Save button per image/video attachment (browsers block bulk auto-downloads)
+    const shortName = (n) => (n && n.length > 22 ? n.slice(0, 20) + '…' : n) || 'media';
+    const saveBtn = (mediaAtts || []).length === 1
+        ? `<button class="${btnClass}" data-action="save" data-att-index="0">
+            <svg viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+            <span>Save</span>
+        </button>`
+        : (mediaAtts || []).map((att, idx) => `<button class="${btnClass}" data-action="save" data-att-index="${idx}">
+            <svg viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+            <span>Save · ${shortName(att.originalName)}</span>
+        </button>`).join('');
 
     const editBtn = isOwn && !hasAttachments ? `<button class="${btnClass}" data-action="edit">
         <svg viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
@@ -1885,11 +1886,11 @@ function buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, btn
 }
 
 // Shared action dispatch (used by dropdown + sheet - one place, never drifts)
-async function dispatchMessageAction(action, messageId) {
+async function dispatchMessageAction(action, messageId, attIndex) {
     if (action === 'copy') {
         await handleCopyMessage(messageId);
     } else if (action === 'save') {
-        await handleSaveMessageMedia(messageId);
+        await handleSaveMessageMedia(messageId, attIndex);
     } else if (action === 'reply') {
         showReplyPreview(messageId);
     } else if (action === 'edit') {
@@ -1913,7 +1914,7 @@ function showMobileActionSheet(messageId) {
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
     const hasText = !!(message.text && message.text.trim());
-    const hasMedia = (message.attachments || []).some(a => a.type === 'image' || a.type === 'video');
+    const mediaAtts = (message.attachments || []).filter(a => a.type === 'image' || a.type === 'video');
 
     const overlay = document.createElement('div');
     overlay.className = 'mobile-action-sheet-overlay';
@@ -1921,8 +1922,7 @@ function showMobileActionSheet(messageId) {
 
     const sheet = document.createElement('div');
     sheet.className = 'mobile-action-sheet';
-    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, "mobile-action-item") + `</div>`;
-
+    sheet.innerHTML = `<div style="padding: 8px 0;">` + buildMessageActionButtons(isOwn, hasAttachments, hasText, mediaAtts, "mobile-action-item") + `</div>`;
     document.body.appendChild(overlay);
     document.body.appendChild(sheet);
 
@@ -1935,7 +1935,7 @@ function showMobileActionSheet(messageId) {
         btn.onclick = async (e) => {
             const action = btn.dataset.action;
             closeMobileActionSheet();
-            await dispatchMessageAction(action, messageId);
+            await dispatchMessageAction(action, messageId, btn.dataset.attIndex);
         };
     });
 }
@@ -1974,12 +1974,12 @@ function showActionDropdown(button, messageId) {
     const isOwn = message.senderId._id === appState.user._id;
     const hasAttachments = message.attachments && message.attachments.length > 0;
     const hasText = !!(message.text && message.text.trim());
-    const hasMedia = (message.attachments || []).some(a => a.type === 'image' || a.type === 'video');
+    const mediaAtts = (message.attachments || []).filter(a => a.type === 'image' || a.type === 'video');
 
     // Same shared builder as the mobile sheet - no duplicated markup
     const dropdown = document.createElement('div');
     dropdown.className = 'action-dropdown';
-    dropdown.innerHTML = buildMessageActionButtons(isOwn, hasAttachments, hasText, hasMedia, "action-dropdown-item");
+    dropdown.innerHTML = buildMessageActionButtons(isOwn, hasAttachments, hasText, mediaAtts, "action-dropdown-item");
     document.body.appendChild(dropdown);
 
     const buttonRect = button.getBoundingClientRect();
@@ -2008,7 +2008,7 @@ function showActionDropdown(button, messageId) {
         btn.onclick = async (e) => {
             const action = btn.dataset.action;
             closeActionDropdown();
-            await dispatchMessageAction(action, messageId);
+            await dispatchMessageAction(action, messageId, btn.dataset.attIndex);
         };
     });
 }
