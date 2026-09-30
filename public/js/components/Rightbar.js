@@ -1,20 +1,28 @@
 const newsData = [
     {
         id: 1,
+        category: "Engineering Features",
+        title: "Frontend & Backend Engineering (just practicing the concepts overall)",
+        description: `Frontend is Plain JS and SPA ( no framework & learning purpose, demonstrating power of vanilla JS ), upload directly no server in between, structured and managing state the same as react (files,components...), huge css (even bootstrap coudn't help as i'm not ui/ux at all)
+        Validation, Cache, Downloading, .... \n Backend is Nodejs, Express, MongoDB, Scoket.io, DB indexing and aggreation piplines, Security (Model boundary, app boundary, JWT, Rate limiting, Authorization), Uploads checkup and cleanup, DECRYPTION, Analytics, ....     `,
+        color: "#66dfea"
+    },
+    {
+        id: 2,
         category: "First Feature",
         title: "Engage with Feed, Share posts, Follow People",
         description: "Experience learning and sharing with people who share your interests. Fully manage your Feed, and connect with people to see their feed at firsthand.....",
         color: "#667eea"
     },
     {
-        id: 2,
+        id: 3,
         category: "Second Feature",
         title: "Chat in real-time",
         description: "Text people or send them images, videos, and files in real-time and create groups and stay connected togather.",
         color: "#764ba2"
     },
     {
-        id: 3,
+        id: 4,
         category: "Profile and Settings",
         title: "Entire account Management",
         description: "Profile management and settings are available in real time to achieve desired results. Plus analytics section to track your account growth.",
