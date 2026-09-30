@@ -18,6 +18,10 @@ import { initSocketIO } from "./config/socket.js";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
 const app = express()
+
+app.set('trust proxy', 1)   // Render proxy - makes req.ip the real client IP for rate limiting
+
+const httpServer = createServer(app)
 app.use(compression())
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -50,7 +54,6 @@ app.use("/api", apiLimiter);
 //     crossOriginEmbedderPolicy: false,
 // }));
 
-const httpServer = createServer(app)
 initSocketIO(httpServer)
 
 app.use(cookieParser())
@@ -96,6 +99,6 @@ try {
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, "0.0.0.0", () => console.log(`Api running on port ${PORT}`))
 
-// later add graceful shutdown for mongoose and socket.io  
+// later add graceful shutdown for mongoose and socket.io
 // later add refreshtoken rotation so that after each access token previous refresh token is invalidated
 

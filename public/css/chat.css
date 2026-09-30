@@ -156,10 +156,24 @@
   width: 120px;
 }
 
-/* Prevent body scroll in messenger mode */
+/* Prevent body scroll in messenger mode (iOS-safe)
+   MUST match the dvh math used by .app-layout.messenger-mode / .chat-layout.
+   100vh here (old version) made the page taller than the visible screen
+   whenever the iOS address bar was showing -> content slid under the navbar. */
 body.messenger-active {
   overflow: hidden;
   height: 100vh;
+  /* fallback - old browsers */
+  height: 100dvh;
+  /* iOS dynamic viewport - the fix */
+  overscroll-behavior: none;
+  /* kill iOS rubber-band swipe that shifts content */
+}
+
+/* iOS scrolls <html> even when <body> is locked - lock it too */
+html:has(body.messenger-active) {
+  overflow: hidden;
+  height: 100dvh;
 }
 
 .app-layout.messenger-mode {

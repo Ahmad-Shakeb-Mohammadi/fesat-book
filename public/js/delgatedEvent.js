@@ -46,6 +46,7 @@ import { cleanupGlobalSocketHandlers } from "./chat/globalSocketHandlers.js";
 import { openSearchPeopleModal, closeSearchPeopleModal, handleSearchPeopleInput, handleSearchLoadMore } from "./searchPoeple.js";
 import { navigateToConversation } from "./chat/chatNavigator.js";
 import { invalidateRoute, invalidateAll } from "./utils/routeCache.js";
+import { openImagePreview } from "./utils/imagePreview.js";
 
 // Rapid-click guard state for like buttons
 const likeClickTimes = new Map();
@@ -147,6 +148,7 @@ export function FeedDelegation() {
         const searchOverlay = e.target.matches?.("#searchPeopleOverlay");
         const searchLoadMoreBtn = e.target.closest("#searchLoadMoreBtn");
         const messageBtn = e.target.closest(".message-btn")
+        const feedImage = e.target.closest(".modern-post-image")
 
         if (likeBtn) {
             e.preventDefault();
@@ -357,6 +359,9 @@ export function FeedDelegation() {
                 postCommentBtn.disabled = false;
             }
 
+        } else if (feedImage) {
+            openImagePreview(feedImage.src);
+            return;
         } else if (likeToggle) {
             e.preventDefault();
             let postId = likeToggle.dataset.postId;
