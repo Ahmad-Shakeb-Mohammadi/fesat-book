@@ -26,6 +26,14 @@ app.use((req, res, next) => {
     }
     next();
 });
+
+const globalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 120,              // enough for a real page load (~40 module fetches), death for bots
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+});
+app.use(globalLimiter);
 app.set('trust proxy', 1)   // Render proxy - makes req.ip the real client IP for rate limiting
 
 const httpServer = createServer(app)
