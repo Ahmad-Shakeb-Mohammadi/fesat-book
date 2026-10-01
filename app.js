@@ -21,9 +21,14 @@ const app = express()
 
 // Put right after app.set('trust proxy', 1)
 app.use((req, res, next) => {
-    if (!req.path.startsWith('/socket.io')) {
-        console.log(`[req] ${req.method} ${req.path} | ${req.ip} | ${(req.headers['user-agent'] || '-').slice(0, 70)}`);
-    }
+    if (req.path.startsWith('/socket.io')) return next();
+
+    // Skip Render internal health probes (private 10.x IP + no user-agent)
+    if (/^10\./.test(req.ip) && !req.headers['user-agent']) return next();
+
+    res.on('finish', () => {
+        console.log(`[req] ${req.method} ${req.path} | ${res.statusCode} | ${res.getHeader('content-length') || '?'}B | ${req.ip} | ${(req.headers['user-agent'] || '-').slice(0, 60)}`);
+    });
     next();
 });
 
