@@ -19,6 +19,13 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 const app = express()
 
+// Put right after app.set('trust proxy', 1)
+app.use((req, res, next) => {
+    if (!req.path.startsWith('/socket.io')) {
+        console.log(`[req] ${req.method} ${req.path} | ${req.ip} | ${(req.headers['user-agent'] || '-').slice(0, 70)}`);
+    }
+    next();
+});
 app.set('trust proxy', 1)   // Render proxy - makes req.ip the real client IP for rate limiting
 
 const httpServer = createServer(app)
