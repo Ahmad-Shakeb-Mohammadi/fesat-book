@@ -20,46 +20,40 @@ import rateLimit from "express-rate-limit";
 
 const app = express();
 
-app.set("trust proxy", 1);
+// Real client IP through Render's proxy chain (Cloudflare + Render LB).
+app.set("trust proxy", true);
 
 app.use(compression());
 
-// ============================================================
-// 4. RATE LIMITING - layered defense
-// ============================================================
-// 4a. Global: EVERY route (static + SPA + API). A blocked request
-//     costs the bot ~200 bytes. Socket.io excluded (its heartbeat
-//     would eat a real user's budget).
-const globalLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 300,               // was 120 - room for several users behind one NAT + media bursts
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    handler: (req, res) => {
-        console.warn(`[429] ${req.ip} | ${req.path}`);   // TEMP: shows WHO is being limited
-        res.status(429).json({ message: "Too many requests, slow down." });
-    },
-});
-app.use((req, res, next) => {
-    if (req.path.startsWith("/socket.io")) return next();
-    globalLimiter(req, res, next);
-});
+// Client key that cannot be faked: Render's Cloudflare layer sets
+// cf-connecting-ip and overwrites whatever the visitor sent.
+// Fallback (local dev / no header): req.ip.
+const clientKey = (req) => req.get("cf-connecting-ip") || req.ip;
 
-// 4b. Auth brute-force: strict - login/signup/refresh attempts
+// 1) STRICT: login / signup / refresh attempts
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 30,
     standardHeaders: "draft-8",
     legacyHeaders: false,
-    message: { message: "Too many attempts. Try again later." },
+    keyGenerator: clientKey,
+    handler: (req, res) => {
+        console.warn(`[429 AUTH] ${clientKey(req)} ${req.method} ${req.originalUrl}`);
+        res.status(429).json({ message: "Too many attempts. Try again later." });
+    },
 });
 
-// 4c. API window: generous for real authenticated browsing
+// 2) GENEROUS: everything under /api
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 2000,
+    limit: 3000,
     standardHeaders: "draft-8",
     legacyHeaders: false,
+    keyGenerator: clientKey,
+    handler: (req, res) => {
+        console.warn(`[429 API] ${clientKey(req)} ${req.method} ${req.originalUrl}`);
+        res.status(429).json({ message: "Too many requests. Please slow down." });
+    },
 });
 
 const httpServer = createServer(app);
@@ -69,8 +63,16 @@ app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 
+// Health: registered BEFORE the api limiter = never limited (keep-alive + Render checks)
 app.get("/api/health", (req, res) => res.json({ ok: true, uptime: Math.round(process.uptime()) }));
 
+// TEMP: open once after deploy to verify, then delete this route
+app.get("/api/ipcheck", (req, res) => res.json({
+    key: req.get("cf-connecting-ip") || req.ip,
+    ip: req.ip,
+    cf: req.get("cf-connecting-ip"),
+    xff: req.get("x-forwarded-for"),
+}));
 
 app.use(["/signup", "/login", "/auth", "/cloudinary/signup-signature"], authLimiter);
 
@@ -109,7 +111,7 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================
-// 11. BOOT
+// BOOT
 // ============================================================
 try {
     await mongoose.connect(process.env.MONGODB_URI);
