@@ -17,97 +17,97 @@ import { createServer } from "http";
 import { initSocketIO } from "./config/socket.js";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
-const app = express()
 
-// Put right after app.set('trust proxy', 1)
-app.use((req, res, next) => {
-    if (req.path.startsWith('/socket.io')) return next();
+const app = express();
 
-    // Skip Render internal health probes (private 10.x IP + no user-agent)
-    if (/^10\./.test(req.ip) && !req.headers['user-agent']) return next();
+app.set("trust proxy", 1);
 
-    res.on('finish', () => {
-        console.log(`[req] ${req.method} ${req.path} | ${res.statusCode} | ${res.getHeader('content-length') || '?'}B | ${req.ip} | ${(req.headers['user-agent'] || '-').slice(0, 60)}`);
-    });
-    next();
-});
+app.use(compression());
 
+// ============================================================
+// 4. RATE LIMITING - layered defense
+// ============================================================
+// 4a. Global: EVERY route (static + SPA + API). A blocked request
+//     costs the bot ~200 bytes. Socket.io excluded (its heartbeat
+//     would eat a real user's budget).
 const globalLimiter = rateLimit({
     windowMs: 60 * 1000,
-    limit: 120,              // enough for a real page load (~40 module fetches), death for bots
+    limit: 120,
     standardHeaders: "draft-8",
     legacyHeaders: false,
+    message: { message: "Too many requests, slow down." },
 });
-app.use(globalLimiter);
-app.set('trust proxy', 1)   // Render proxy - makes req.ip the real client IP for rate limiting
+app.use((req, res, next) => {
+    if (req.path.startsWith("/socket.io")) return next();
+    globalLimiter(req, res, next);
+});
 
-const httpServer = createServer(app)
-app.use(compression())
+// 4b. Auth brute-force: strict - login/signup/refresh attempts
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { message: "Too many attempts. Try again later." },
+});
+
+// 4c. API window: generous for real authenticated browsing
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 2000,
     standardHeaders: "draft-8",
-    legacyHeaders: false
+    legacyHeaders: false,
 });
-app.use("/api", apiLimiter);
 
-// app.use(helmet({
-//     contentSecurityPolicy: {
-//         directives: {
-//             defaultSrc: ["'self'"],
-//             // ../js/main.js ('self') + bootstrap.bundle (jsdelivr) + socket.io client + inline onerror handlers
-//             scriptSrc: ["'self'", "https://cdn.jsdelivr.net", "https://cdn.socket.io", "'unsafe-inline'"],
-//             // bootstrap css + bootstrap-icons css (jsdelivr) + your css ('self') + style="" attributes
-//             styleSrc: ["'self'", "https://cdn.jsdelivr.net", "'unsafe-inline'"],
-//             // feed/chat images from Cloudinary + FileReader data: previews + blob: pdfs
-//             imgSrc: ["'self'", "data:", "blob:", "https://res.cloudinary.com"],
-//             // chat videos from Cloudinary + blob: media
-//             mediaSrc: ["'self'", "blob:", "https://res.cloudinary.com"],
-//             // your API + direct Cloudinary uploads + socket.io websocket
-//             connectSrc: ["'self'", "https://api.cloudinary.com", "wss:"],
-//             // bootstrap-icons font files (woff2) from jsdelivr
-//             fontSrc: ["'self'", "data:", "https://cdn.jsdelivr.net"],
-//             objectSrc: ["'none'"],
-//             frameAncestors: ["'self'"],
-//         },
-//     },
-//     crossOriginEmbedderPolicy: false,
-// }));
+const httpServer = createServer(app);
+initSocketIO(httpServer);
 
-initSocketIO(httpServer)
-
-app.use(cookieParser())
+app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 
-app.use(authRoutes)
-app.use('/api/cloudinary', auth, cloudinaryRoutes)
-app.use('/api/media', auth, mediaRoutes)
-app.use('/api', auth, userRoutes)
-app.use('/api', auth, feedRoutes)
-
-app.use('/api', auth, settingRoutes)
-app.use('/api/conversations', auth, conversationRoutes)
-app.use('/api/conversations', auth, messageRoutes);
-
-app.use(express.static(path.join(__dirname, "public")))
+app.get("/api/health", (req, res) => res.json({ ok: true, uptime: Math.round(process.uptime()) }));
 
 
-app.use((req, res, next) => {
-    // If it's an API route that wasn't handled, return 404
-    if (req.path.startsWith('/api')) {
-        return res.status(404).json({ message: 'API endpoint not found' });
+app.use(["/signup", "/login", "/auth", "/cloudinary/signup-signature"], authLimiter);
+
+app.use(authRoutes);
+
+app.use("/api", apiLimiter);
+app.use("/api/cloudinary", auth, cloudinaryRoutes);
+app.use("/api/media", auth, mediaRoutes);
+app.use("/api", auth, userRoutes);
+app.use("/api", auth, feedRoutes);
+app.use("/api", auth, settingRoutes);
+app.use("/api/conversations", auth, conversationRoutes);
+app.use("/api/conversations", auth, messageRoutes);
+
+app.use(express.static(path.join(__dirname, "public"), {
+    maxAge: "1h",
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
     }
-    // Otherwise serve the SPA for frontend routes
+}));
+
+app.use((req, res) => {
+    if (req.path.startsWith("/api")) {
+        return res.status(404).json({ message: "API endpoint not found" });
+    }
+    if (!req.headers.accept?.includes("text/html")) {
+        return res.status(404).send("Not found");
+    }
     res.sendFile(path.join(__dirname, "public", "html", "index.html"));
 });
 
 app.use((err, req, res, next) => {
-    console.log(err)
+    console.log(err);
     const statusCode = err.statusCode || 500;
-    res.status(statusCode).json({ message: 'Error happened try to refresh' })
-})
+    res.status(statusCode).json({ message: "Error happened try to refresh" });
+});
 
+// ============================================================
+// 11. BOOT
+// ============================================================
 try {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("MongoDB connected");
@@ -117,8 +117,6 @@ try {
 }
 
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, "0.0.0.0", () => console.log(`Api running on port ${PORT}`))
+httpServer.listen(PORT, "0.0.0.0", () => console.log(`Api running on port ${PORT}`));
 
-// later add graceful shutdown for mongoose and socket.io
-// later add refreshtoken rotation so that after each access token previous refresh token is invalidated
-
+// later: graceful shutdown, refresh-token rotation
