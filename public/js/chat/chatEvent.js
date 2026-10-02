@@ -1229,6 +1229,11 @@ function initializeMediaElements(expectedConversationId) {
 
     const jobs = Array.from(mediaContainers).map(async (el) => {
         if (chatState.activeConversationId !== expectedConversationId) return null;
+        // SKIP media that already has its URL - appendMessage re-runs this for
+        // EVERY new message; without this skip it re-fetches the entire chat's
+        // media each time (the request storm that exhausts the rate limit)
+        const existing = el.querySelector('.chat-media-img, .chat-media-video');
+        if (existing?.src) return null;
         const public_id = el.dataset.publicId;
         const resource_type = el.dataset.resourceType;
         const convId = el.dataset.conversationId;

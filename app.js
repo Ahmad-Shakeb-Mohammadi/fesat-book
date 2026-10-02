@@ -32,10 +32,13 @@ app.use(compression());
 //     would eat a real user's budget).
 const globalLimiter = rateLimit({
     windowMs: 60 * 1000,
-    limit: 120,
+    limit: 300,               // was 120 - room for several users behind one NAT + media bursts
     standardHeaders: "draft-8",
     legacyHeaders: false,
-    message: { message: "Too many requests, slow down." },
+    handler: (req, res) => {
+        console.warn(`[429] ${req.ip} | ${req.path}`);   // TEMP: shows WHO is being limited
+        res.status(429).json({ message: "Too many requests, slow down." });
+    },
 });
 app.use((req, res, next) => {
     if (req.path.startsWith("/socket.io")) return next();
